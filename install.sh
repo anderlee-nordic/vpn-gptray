@@ -9,6 +9,9 @@ PY_LINK="/usr/local/bin/${PY_SCRIPT}"
 BASH_LINK="/usr/local/bin/${BASH_SCRIPT}"
 CONFIG_DIR="$(eval echo ~${SUDO_USER:-$USER})/.config/vpn-gptray"
 CONFIG_FILE="${CONFIG_DIR}/config.txt"
+ICON_FILE="vpntray.svg"
+DESKTOP_ENTRY="vpn_gptray.desktop"
+DESKTOP_ENTRY_DIR="$(eval echo ~${SUDO_USER:-$USER})/.local/share/applications"
 # --------------------------------------
 
 # Colors
@@ -48,6 +51,12 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
 PORTAL=vpn.nordicsemi.no
 EOF
 fi
+
+# APP menu
+install -p "${ICON_FILE}" "${CONFIG_DIR}/"
+install -p "${DESKTOP_ENTRY}" "${DESKTOP_ENTRY_DIR}/"
+sed -i "s|Icon=.*|Icon=${CONFIG_DIR}/vpntray.svg|" "${DESKTOP_ENTRY_DIR}/${DESKTOP_ENTRY}"
+update-desktop-database ${DESKTOP_ENTRY_DIR}
 
 # Transfer ownership to user
 chown -R "$USER:$USER" "${CONFIG_DIR}"

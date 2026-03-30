@@ -1,0 +1,18 @@
+[Desktop Entry]
+Name=vpn_gptray
+Comment=VPN Global Protect system tray
+Exec=/opt/vpn_gputil/vpn_gptray
+Icon=vpntray.svg
+Terminal=false
+Type=Application
+Categories=Utility
+Name[en]=vpn_gptray
+Name[en_US]=vpn_gptray
+Name[en_US.UTF-8]=vpn_gptray
+Comment[en]=VPN Global Protect system tray
+Comment[en_US]=VPN Global Protect system tray
+Comment[en_US.UTF-8]=VPN Global Protect system tray
+PrefersNonDefaultGPU=false
+Hidden=false
+NoDisplay=false
+StartupNotify=false
