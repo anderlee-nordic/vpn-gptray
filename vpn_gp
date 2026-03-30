@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# GlobalProtect VPN CLI^2 Tool
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Read config file 
+CONFIG_FILE="$HOME/.config/vpn-gptray/config.txt"
+if [[ -f "${CONFIG_FILE}" ]]; then
+  . "${CONFIG_FILE}"
+fi
+
+show_help() {
+    echo "GlobalProtect VPN CLI^2 Tool"
+    echo ""
+    echo "Usage: vpn_gp <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  u, up              Connect to VPN"
+    echo "  s, status [-v]     Show current VPN status"
+    echo "  d, down            Disconnect from VPN"
+    echo "  h, help            Show this help message"
+    echo ""
+    echo "Options (status only):"
+    echo "  -v, --verbose       Show additional details"
+    echo ""
+}
+
+case "${1:-}" in
+    u|up)
+        echo -e "${YELLOW}Connecting to $PORTAL...${NC}"
+        globalprotect connect -p "$PORTAL"
+        ;;
+    s|status)
+        # Parse status options (args after the command)
+        verbose=0
+        shift
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -v|--verbose)
+                    verbose=1
+                    shift
+                    ;;
+                -h|--help)
+                    echo "Usage: vpn_gp s|status [-v|--verbose]"
+                    exit 0
+                    ;;
+                *)
+                    echo -e "${RED}Error: Unknown option for status: '$1'${NC}"
+                    echo "Usage: vpn_gp s|status [-v|--verbose]"
+                    exit 2
+                    ;;
+            esac
+        done
+
+        if [[ $verbose -eq 1 ]]; then
+            echo -e "${YELLOW}Verbose status:${NC}"
+            globalprotect show --status
+            globalprotect show --details
+        else
+            globalprotect show --status
+        fi
+        ;;
+    d|down)
+        echo -e "${YELLOW}Disconnecting from VPN...${NC}"
+        globalprotect disconnect
+        ;;
+    h|help|--help|-h)
+        show_help
+        ;;
+    "")
+        echo -e "${RED}Error: No command provided${NC}"
+        echo ""
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Error: Unknown command '$1'${NC}"
+        echo ""
+        show_help
+        ;;
+esac

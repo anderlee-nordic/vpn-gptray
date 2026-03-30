@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""
+GlobalProtect VPN System Tray Indicator
+Integrates with the vpn_gp bash script for VPN control from the system tray.
+
+Author: Ander Lee <ander.lee@nordicsemi.no>
+"""
+
+import sys
+import os
+
+
+APP_ID = "globalprotect-vpn-indicator"
+# Path to vpn_gp script (adjust if needed)
+VPN_CLI = "vpn_gp"
+# Update interval in milliseconds
+UPDATE_INTERVAL = 10000
+
+
+# Daemonize before importing GTK (to avoid multi-threaded fork issues)
+def daemonize():
+    try:
+        if os.fork() > 0:
+            sys.exit(0)
+        os.setsid()
+        if os.fork() > 0:
+            sys.exit(0)
+    except OSError:
+        sys.exit(1)
+    # Redirect standard file descriptors to /dev/null
+    sys.stdin = open(os.devnull, 'r')
+    sys.stdout = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w')
+
+# Daemonize first, before any GTK imports
+if __name__ == "__main__" and "--no-daemon" not in sys.argv:
+    daemonize()  # make script run in background
+
+# Safe to import GTK now
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('AyatanaAppIndicator3', '0.1')
+from gi.repository import Gtk, GLib, Gio
+from gi.repository import AyatanaAppIndicator3 as AppIndicator3
+
+class VPNIndicator:
+    def __init__(self):
+        self.is_busy = False
+
+        # Create the indicator
+        self.indicator = AppIndicator3.Indicator.new(
+            APP_ID,
+            "network-vpn-symbolic",  # Default icon
+            AppIndicator3.IndicatorCategory.APPLICATION_STATUS
+        )
+        self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        self.indicator.set_title("GlobalProtect VPN")
+
+        # Build the menu
+        self.menu = self.build_menu()
+        self.indicator.set_menu(self.menu)
+
+        # Initial status check (delayed to let GTK initialize)
+        GLib.timeout_add(100, self.update_status_async)
+
+        #### UNSTABLE!! ###
+        # Uncomment to set up periodic status updates
+        # GLib.timeout_add(UPDATE_INTERVAL, self.periodic_update)
+
+    def build_menu(self):
+        menu = Gtk.Menu()
+
+        # Status item (non-clickable, just shows current status)
+        self.status_item = Gtk.MenuItem(label="Status: Checking...")
+        self.status_item.set_sensitive(False)
+        menu.append(self.status_item)
+
+        # Separator
+        menu.append(Gtk.SeparatorMenuItem())
+
+        # Connect item
+        self.connect_item = Gtk.MenuItem(label="Connect")
+        self.connect_item.connect("activate", self.on_connect)
+        menu.append(self.connect_item)
+
+        # Disconnect item
+        self.disconnect_item = Gtk.MenuItem(label="Disconnect")
+        self.disconnect_item.connect("activate", self.on_disconnect)
+        menu.append(self.disconnect_item)
+
+        # Separator
+        menu.append(Gtk.SeparatorMenuItem())
+
+        # Refresh status
+        refresh_item = Gtk.MenuItem(label="Refresh Status")
+        refresh_item.connect("activate", self.on_refresh)
+        menu.append(refresh_item)
+
+        # Separator
+        menu.append(Gtk.SeparatorMenuItem())
+
+        # Quit item
+        quit_item = Gtk.MenuItem(label="Quit")
+        quit_item.connect("activate", self.on_quit)
+        menu.append(quit_item)
+
+        menu.show_all()
+        return menu
+
+    def run_command_async(self, command, callback):
+        """Run a vpn_gp command asynchronously."""
+        try:
+            proc = Gio.Subprocess.new(
+                [VPN_CLI, command, "-v" if command == "status" else ""] ,
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            )
+            proc.communicate_utf8_async(None, None, callback, command)
+        except Exception:
+            callback(None, None, command)
+
+    def on_status_complete(self, proc, result, command):
+        """Called when status command completes."""
+        self.is_busy = False
+
+        output = ""
+        try:
+            if proc:
+                success, stdout, stderr = proc.communicate_utf8_finish(result)
+                output = stdout if stdout else ""
+        except Exception:
+            pass
+
+        self.apply_status(output)
+
+    def on_connect_complete(self, proc, result, command):
+        """Called when connect command completes."""
+        self.is_busy = False
+        self.update_status_async()
+
+    def on_disconnect_complete(self, proc, result, command):
+        """Called when disconnect command completes."""
+        self.is_busy = False
+        self.update_status_async()
+
+    def apply_status(self, output):
+        """Apply status based on command output."""
+        if "Connected" in output:
+            status = "connected"
+            gw = next(l.split(":",1)[1].strip() for l in output.splitlines() \
+                if l.startswith("Gateway Name:"))
+            uptime = int(next(l.split(":",1)[1] for l in output.splitlines() \
+                if l.startswith("Uptime(sec):")))
+            uptime_pretty = f"{uptime//60} min {uptime%60} sec"
+        elif "Disconnected" in output:
+            status = "disconnected"
+        elif "Connecting" in output:
+            status = "connecting"
+        elif "Unable to establish" in output:
+            status = "issue"
+        elif "not_found" in output:
+            status = "not_installed"
+        else:
+            status = "unknown"
+
+        if status == "connected":
+            self.indicator.set_icon_full("network-vpn-symbolic", "VPN Connected")
+            self.status_item.set_label(f"✓ Connected\nGW: {gw}\nUptime: {uptime_pretty}")
+            self.connect_item.set_sensitive(False)
+            self.disconnect_item.set_sensitive(True)
+        elif status == "disconnected":
+            self.indicator.set_icon_full("network-vpn-disconnected-symbolic", "VPN Disconnected")
+            self.status_item.set_label("✗ Disconnected")
+            self.connect_item.set_sensitive(True)
+            self.disconnect_item.set_sensitive(False)
+        elif status == "connecting":
+            self.indicator.set_icon_full("network-vpn-acquiring-symbolic", "VPN Connecting")
+            self.status_item.set_label("⟳ Connecting...")
+            self.connect_item.set_sensitive(False)
+            self.disconnect_item.set_sensitive(True)
+        elif status == "issue":
+            self.indicator.set_icon_full("network-vpn-disabled-symbolic", "Encountered issue")
+            self.status_item.set_label("Unable to establish GlobalProtect")
+            self.connect_item.set_sensitive(True)
+            self.disconnect_item.set_sensitive(True)
+        elif status == "not_installed":
+            self.indicator.set_icon_full("dialog-error-symbolic", "vpn_gp Not Found")
+            self.status_item.set_label("⚠ vpn_gp not found in PATH")
+            self.connect_item.set_sensitive(False)
+            self.disconnect_item.set_sensitive(False)
+        else:
+            self.indicator.set_icon_full("network-vpn-no-route-symbolic", "VPN Status Unknown")
+            self.status_item.set_label("? Status unknown")
+            self.connect_item.set_sensitive(True)
+            self.disconnect_item.set_sensitive(True)
+
+    def update_status_async(self):
+        """Update status asynchronously."""
+        if self.is_busy:
+            return False
+
+        self.is_busy = True
+        self.indicator.set_icon_full("emblem-synchronizing-symbolic", "Updating VPN Status")
+        self.status_item.set_label("⟳ Updating...")
+        self.connect_item.set_sensitive(False)
+        self.disconnect_item.set_sensitive(False)
+        self.run_command_async("status", self.on_status_complete)
+        return False
+
+    def periodic_update(self):
+        """Called periodically to update status."""
+        if not self.is_busy:
+            self.update_status_async()
+        return True  # Keep the timeout running
+
+    def on_connect(self, widget):
+        """Connect to VPN using vpn_gp up."""
+        if self.is_busy:
+            return
+
+        self.is_busy = True
+        self.status_item.set_label("⟳ Connecting...")
+        self.indicator.set_icon_full("network-vpn-acquiring-symbolic", "VPN Connecting")
+        self.connect_item.set_sensitive(False)
+        self.disconnect_item.set_sensitive(False)
+
+        self.run_command_async("up", self.on_connect_complete)
+
+    def on_disconnect(self, widget):
+        """Disconnect from VPN using vpn_gp down."""
+        if self.is_busy:
+            return
+
+        self.is_busy = True
+        self.status_item.set_label("⟳ Disconnecting...")
+        self.connect_item.set_sensitive(False)
+        self.disconnect_item.set_sensitive(False)
+
+        self.run_command_async("down", self.on_disconnect_complete)
+
+    def on_refresh(self, widget):
+        """Manually refresh the status."""
+        if self.is_busy:
+            return
+        self.update_status_async()
+
+    def on_quit(self, widget):
+        """Quit the application."""
+        Gtk.main_quit()
+        raise SystemExit(0)
+
+
+def main():
+    indicator = VPNIndicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
